@@ -509,6 +509,7 @@ export const dict = {
   "session.tab.session": "Session",
   "session.tab.status.waiting": "Waiting for input",
   "session.tab.status.running": "Running",
+  "session.tab.status.ready": "Response ready",
   "session.tab.status.error": "Error",
   "session.tab.status.idle": "Idle",
   "session.tab.more": "More...",

@@ -60,6 +60,7 @@ const statusDotClass: Record<SessionTabStatus, string> = {
   waiting: "bg-v2-state-fg-warning",
   error: "bg-v2-state-fg-danger",
   running: "bg-v2-state-fg-info animate-pulse",
+  ready: "bg-v2-state-fg-success",
   idle: "bg-v2-text-text-faint",
 }
 
@@ -80,6 +81,8 @@ export function SessionStatusDot(props: { server: ServerConnection.Key; sessionI
     if (status === "error") return language.t("session.tab.status.error")
 
     if (status === "running") return language.t("session.tab.status.running")
+
+    if (status === "ready") return language.t("session.tab.status.ready")
 
     return language.t("session.tab.status.idle")
   }

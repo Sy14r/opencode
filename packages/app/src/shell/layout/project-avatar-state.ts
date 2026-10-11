@@ -71,6 +71,14 @@ export function useSessionTabAvatarState(
 
   const errored = createMemo(() => serverCtx()?.notification.session.unseenHasError(sessionId()) ?? false)
 
+  const ready = createMemo(() => {
+    const ctx = serverCtx()
+
+    if (!ctx || needsAttention() || errored()) return false
+
+    return ctx.notification.session.unseenCount(sessionId()) > 0
+  })
+
   const status = createMemo((): SessionTabStatus => {
     if (needsAttention()) return "waiting"
 
@@ -78,10 +86,12 @@ export function useSessionTabAvatarState(
 
     if (loading()) return "running"
 
+    if (ready()) return "ready"
+
     return "idle"
   })
 
   return { unread, loading, status }
 }
 
-export type SessionTabStatus = "waiting" | "error" | "running" | "idle"
+export type SessionTabStatus = "waiting" | "error" | "running" | "ready" | "idle"

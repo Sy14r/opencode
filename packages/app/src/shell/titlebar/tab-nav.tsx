@@ -8,6 +8,8 @@ import { IconButton } from "@opencode/ui/icon-button"
 import { Icon } from "@opencode/ui/icon"
 import { Menu } from "@opencode/ui/menu"
 import { useServerCtx } from "@/runtime/server/runtime"
+import { useDirectoryPicker } from "@/workspaces/selection/picker"
+import { moveSessionDirectory } from "@/session/commands/move"
 import { useLanguage } from "@/runtime/i18n/language"
 import { ServerConnection, serverName, useServers } from "@/runtime/server/registry"
 import { displayName } from "@opencode/ui/project-avatar"
@@ -55,6 +57,33 @@ export function TabNavItem(props: {
 
   const servers = useServers()
   const serverCtx = useServerCtx(() => servers.list.find((item) => ServerConnection.key(item) === props.server))
+  const pickDirectory = useDirectoryPicker()
+
+  const move = () => {
+    const session = props.session
+    const conn = servers.list.find((item) => ServerConnection.key(item) === props.server)
+    const ctx = serverCtx()
+
+    if (!session || !conn || !ctx) return
+    pickDirectory({
+      server: conn,
+      location: session.location,
+      title: language.t("session.location.choose"),
+      onSelect: (result) => {
+        const selected = Array.isArray(result) ? result[0] : result
+
+        if (!selected) return
+        void moveSessionDirectory({
+          api: ctx.sdk.api,
+          projects: ctx.projects,
+          sessions: ctx.data.session,
+          session,
+          directory: selected,
+          language,
+        })
+      },
+    })
+  }
 
   const project = createMemo(() => {
     const session = props.session
@@ -401,6 +430,9 @@ export function TabNavItem(props: {
         >
           <Menu.Item disabled={!props.session || rename.isPending} onSelect={() => setMenu("rename", true)}>
             {language.t("common.rename")}
+          </Menu.Item>
+          <Menu.Item disabled={!props.session} onSelect={move}>
+            {language.t("common.move")}…
           </Menu.Item>
           <Menu.Item onSelect={props.onClose}>{language.t("common.closeTab")}</Menu.Item>
         </Menu.Context.Content>

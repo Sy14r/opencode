@@ -6,11 +6,14 @@ import { Accessibility, AutoScroller, Feedback, PointerActivationConstraints } f
 import { RestrictToHorizontalAxis, RestrictToVerticalAxis } from "@dnd-kit/abstract/modifiers"
 import { RestrictToElement } from "@dnd-kit/dom/modifiers"
 import { arrayMove } from "@dnd-kit/helpers"
+import { displayName } from "@opencode/ui/project-avatar"
+import { Icon } from "@opencode/ui/icon"
 import { tabHref, tabKey, type SessionTab, type Tab } from "@/shell/tabs/tabs"
 import { ServerConnection } from "@/runtime/server/registry"
 import { DraftTabItem, TabNavItem } from "@/shell/titlebar/tab-nav"
 import { useGlobal, useServerCtx, type ServerCtx } from "@/runtime/server/runtime"
 import { useLanguage } from "@/runtime/i18n/language"
+import { useSettings } from "@/settings/model"
 import { useCommand } from "@/shell/commands/command"
 import { useTabs } from "@/shell/tabs/tabs"
 import { createTabComposerState } from "@/composer/persistence"
@@ -24,6 +27,7 @@ function SessionTabSlot(props: {
   id: string
   index: number
   active: boolean
+  hideProject: boolean
   orientation: "horizontal" | "vertical"
   session: SessionInfo | undefined
   preparing: boolean
@@ -65,6 +69,7 @@ function SessionTabSlot(props: {
         session={props.session}
         preparing={props.preparing}
         fallbackTitle={props.fallbackTitle}
+        hideProject={props.hideProject}
         onRename={props.onRename}
         onNavigate={() => props.onNavigate(ref)}
         onClose={props.onClose}
@@ -84,6 +89,8 @@ function SessionTabEntry(props: {
   orientation: "horizontal" | "vertical"
   serverCtx: ServerCtx | undefined
   onVisibleChange: (visible: boolean) => void
+  onProjectChange: (project: { worktree: string; name: string } | undefined) => void
+  hideProject: boolean
   onNavigate: (element: HTMLDivElement) => void
   onClose: () => void
 }) {
@@ -136,6 +143,22 @@ function SessionTabEntry(props: {
 
   createEffect(() => props.onVisibleChange(visible()))
 
+  // Report the tab's project upward so the strip can cluster tabs by project.
+  createEffect(() => {
+    const value = session()
+    const ctx = props.serverCtx
+
+    if (!ctx || !value) {
+      props.onProjectChange(undefined)
+
+      return
+    }
+
+    const project = ctx.projects.forSession(value)
+
+    props.onProjectChange(project ? { worktree: project.worktree, name: displayName(project) } : undefined)
+  })
+
   createEffect(() => {
     const ctx = props.serverCtx
     const value = session()
@@ -183,6 +206,7 @@ function SessionTabEntry(props: {
         id={props.id}
         index={props.index}
         active={props.active}
+        hideProject={props.hideProject}
         orientation={props.orientation}
         session={session()}
         preparing={!!pending()}
@@ -249,6 +273,92 @@ function DraftTabSlot(props: {
   )
 }
 
+function TabGroupHeader(props: {
+  name: string
+  count: number
+  collapsed: boolean
+  orientation: "horizontal" | "vertical"
+  onToggle: () => void
+}) {
+  return (
+    <button
+      type="button"
+      data-slot="titlebar-tab-group"
+      data-collapsed={props.collapsed}
+      aria-expanded={!props.collapsed}
+      class="flex h-7 min-w-0 shrink-0 cursor-default items-center gap-1.5 rounded-[6px] px-1.5 text-start text-[12px] text-v2-text-text-muted hover:bg-v2-overlay-simple-overlay-hover focus-visible:outline-none"
+      classList={{ "w-full": props.orientation === "vertical" }}
+      onClick={props.onToggle}
+    >
+      <Icon name={props.collapsed ? "chevron-right" : "chevron-down"} size="small" />
+      <span class="min-w-0 flex-1 truncate">{props.name}</span>
+      <span class="shrink-0">{props.count}</span>
+    </button>
+  )
+}
+
+function TitlebarTabItem(props: {
+  tab: Tab
+  orientation: "horizontal" | "vertical"
+  active: boolean
+  hideProject: boolean
+  visibleTabs: Tab[]
+  onVisibleChange: (visible: boolean) => void
+  onProjectChange: (project: { worktree: string; name: string } | undefined) => void
+  onNavigate: (tab: Tab, el?: HTMLDivElement) => void
+  onClose: (tab: Tab) => void
+}) {
+  const global = useGlobal()
+  const language = useLanguage()
+  const id = tabKey(props.tab)
+  let ref!: HTMLDivElement
+  const visibleIndex = () => props.visibleTabs.findIndex((item) => tabKey(item) === id)
+  useTabShortcut(visibleIndex, () => props.onNavigate(props.tab, ref))
+
+  const serverCtx = useServerCtx(() => {
+    if (props.tab.type !== "session") return
+
+    return global.servers.list().find((item) => ServerConnection.key(item) === props.tab.server)
+  })
+
+  if (props.tab.type === "session") {
+    return (
+      <SessionTabEntry
+        tab={props.tab}
+        id={id}
+        index={visibleIndex()}
+        active={props.active}
+        hideProject={props.hideProject}
+        orientation={props.orientation}
+        serverCtx={serverCtx()}
+        onVisibleChange={props.onVisibleChange}
+        onProjectChange={props.onProjectChange}
+        onNavigate={(element) => {
+          ref = element
+          props.onNavigate(props.tab, element)
+        }}
+        onClose={() => props.onClose(props.tab)}
+      />
+    )
+  }
+
+  return (
+    <DraftTabSlot
+      tab={props.tab}
+      id={id}
+      index={visibleIndex()}
+      active={props.active}
+      orientation={props.orientation}
+      title={language.t("session.tab.session")}
+      onNavigate={(element) => {
+        ref = element
+        props.onNavigate(props.tab, element)
+      }}
+      onClose={() => props.onClose(props.tab)}
+    />
+  )
+}
+
 export function TitlebarTabStrip(props: {
   orientation?: "horizontal" | "vertical"
   tabs: Tab[]
@@ -257,14 +367,68 @@ export function TitlebarTabStrip(props: {
   onClose: (tab: Tab) => void
   onReorder: (keys: string[]) => void
 }) {
-  const global = useGlobal()
   const language = useLanguage()
   const command = useCommand()
+  const settings = useSettings()
   const vertical = () => props.orientation === "vertical"
   let listRef!: HTMLDivElement
   const [visibility, setVisibility] = createStore<Record<string, boolean>>({})
-  const visibleTabs = createMemo(() => props.tabs.filter((tab) => tab.type === "draft" || visibility[tabKey(tab)]))
+
+  // Project clustering for tab groups, reported by entries that resolve their session.
+  const [tabProjects, setTabProjects] = createStore<Record<string, { worktree: string; name: string } | undefined>>(
+    {},
+  )
+
+  const [collapsed, setCollapsed] = createStore<Record<string, boolean>>({})
+
+  const grouped = () => settings.appearance.tabGroups() === "project"
+
+  const groupKey = (tab: Tab) => (tab.type === "session" ? tabProjects[tabKey(tab)]?.worktree : undefined)
+
+  const visibleTabs = createMemo(() =>
+    props.tabs.filter((tab) => {
+      if (tab.type !== "draft" && !visibility[tabKey(tab)]) return false
+
+      if (!grouped()) return true
+
+      const key = groupKey(tab)
+
+      return !key || !collapsed[key]
+    }),
+  )
+
   const visibleTabIds = () => visibleTabs().map(tabKey)
+
+  type TitlebarTabGroup = { key: string | null; name: string; tabs: Tab[] }
+
+  const groups = createMemo(() => {
+    const list: TitlebarTabGroup[] = []
+    const byKey = new Map<string | null, TitlebarTabGroup>()
+
+    for (const tab of props.tabs) {
+      const project = tab.type === "session" ? tabProjects[tabKey(tab)] : undefined
+      const key = project?.worktree ?? null
+      let group = byKey.get(key)
+
+      if (!group) {
+        group = { key, name: project?.name ?? language.t("tabs.group.ungrouped"), tabs: [] }
+        byKey.set(key, group)
+        list.push(group)
+      }
+
+      group.tabs.push(tab)
+    }
+
+    return list
+  })
+
+  const reportTabProject = (tab: Tab, project: { worktree: string; name: string } | undefined) => {
+    const id = tabKey(tab)
+    const current = tabProjects[id]
+
+    if (current?.worktree === project?.worktree && current?.name === project?.name) return
+    setTabProjects(id, project ? { worktree: project.worktree, name: project.name } : undefined)
+  }
 
   command.register("titlebar-tab-cycle", () => [
     {
@@ -367,55 +531,61 @@ export function TitlebarTabStrip(props: {
             classList={{ "flex-row items-center": !vertical(), "flex-col items-stretch": vertical() }}
             ref={listRef}
           >
-            <For each={props.tabs}>
-              {(tab) => {
-                const id = tabKey(tab)
-                let ref!: HTMLDivElement
-                const visibleIndex = () => visibleTabs().findIndex((item) => tabKey(item) === id)
-                useTabShortcut(visibleIndex, () => props.onNavigate(tab, ref))
-
-                const serverCtx = useServerCtx(() => {
-                  if (tab.type !== "session") return
-
-                  return global.servers.list().find((item) => ServerConnection.key(item) === tab.server)
-                })
-
-                if (tab.type === "session") {
-                  return (
-                    <SessionTabEntry
+            <Show
+              when={grouped()}
+              fallback={
+                <For each={props.tabs}>
+                  {(tab) => (
+                    <TitlebarTabItem
                       tab={tab}
-                      id={id}
-                      index={visibleIndex()}
-                      active={props.currentTab === tab}
                       orientation={vertical() ? "vertical" : "horizontal"}
-                      serverCtx={serverCtx()}
-                      onVisibleChange={(visible) => setVisibility(id, visible)}
-                      onNavigate={(element) => {
-                        ref = element
-                        props.onNavigate(tab, element)
-                      }}
-                      onClose={() => props.onClose(tab)}
+                      active={props.currentTab === tab}
+                      hideProject={false}
+                      visibleTabs={visibleTabs()}
+                      onVisibleChange={(visible) => setVisibility(tabKey(tab), visible)}
+                      onProjectChange={(project) => reportTabProject(tab, project)}
+                      onNavigate={props.onNavigate}
+                      onClose={props.onClose}
                     />
-                  )
-                }
+                  )}
+                </For>
+              }
+            >
+              <For each={groups()}>
+                {(group) => (
+                  <>
+                    <TabGroupHeader
+                      name={group.name}
+                      count={group.tabs.length}
+                      collapsed={!!group.key && !!collapsed[group.key]}
+                      orientation={vertical() ? "vertical" : "horizontal"}
+                      onToggle={() => {
+                        const key = group.key
 
-                return (
-                  <DraftTabSlot
-                    tab={tab}
-                    id={id}
-                    index={visibleIndex()}
-                    active={props.currentTab === tab}
-                    orientation={vertical() ? "vertical" : "horizontal"}
-                    title={language.t("session.tab.session")}
-                    onNavigate={(element) => {
-                      ref = element
-                      props.onNavigate(tab, element)
-                    }}
-                    onClose={() => props.onClose(tab)}
-                  />
-                )
-              }}
-            </For>
+                        if (key) setCollapsed(key, (value) => !value)
+                      }}
+                    />
+                    <Show when={!group.key || !collapsed[group.key]}>
+                      <For each={group.tabs}>
+                        {(tab) => (
+                          <TitlebarTabItem
+                            tab={tab}
+                            orientation={vertical() ? "vertical" : "horizontal"}
+                            active={props.currentTab === tab}
+                            hideProject={group.key !== null}
+                            visibleTabs={visibleTabs()}
+                            onVisibleChange={(visible) => setVisibility(tabKey(tab), visible)}
+                            onProjectChange={(project) => reportTabProject(tab, project)}
+                            onNavigate={props.onNavigate}
+                            onClose={props.onClose}
+                          />
+                        )}
+                      </For>
+                    </Show>
+                  </>
+                )}
+              </For>
+            </Show>
           </div>
         </DragDropProvider>
       </div>

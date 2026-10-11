@@ -13,7 +13,7 @@ import { moveSessionDirectory } from "@/session/commands/move"
 import { useLanguage } from "@/runtime/i18n/language"
 import { ServerConnection, serverName, useServers } from "@/runtime/server/registry"
 import { displayName } from "@opencode/ui/project-avatar"
-import { SessionTabAvatar } from "@/shell/layout/session-tab-avatar"
+import { SessionStatusDot, SessionTabAvatar } from "@/shell/layout/session-tab-avatar"
 import { SessionProgressIndicatorV2 } from "@opencode/session-ui/v2/session-progress-indicator-v2"
 import type { SessionInfo } from "@opencode/client/promise"
 import { sessionTabTitle } from "./tab-title"
@@ -33,6 +33,7 @@ export function TabNavItem(props: {
   onRename: (title: string) => Promise<void>
   onClose: () => void
   onNavigate: () => void
+  hideProject?: boolean
   active?: boolean
   suppressNavigation?: boolean
   dragging?: boolean
@@ -313,27 +314,36 @@ export function TabNavItem(props: {
       >
         <span data-slot="project-avatar-slot" class="flex size-4 shrink-0 items-center justify-center">
           <Show
-            when={props.session}
-            keyed
+            when={!props.hideProject || !props.session}
             fallback={
-              <Show
-                when={props.preparing}
-                fallback={
-                  <span class="block size-4 rounded-[3px] border border-v2-border-border-muted" aria-hidden="true" />
-                }
-              >
-                <SessionProgressIndicatorV2 />
+              <Show when={props.session} keyed>
+                {(session) => <SessionStatusDot server={props.server} sessionId={session.id} />}
               </Show>
             }
           >
-            {(session) => (
-              <SessionTabAvatar
-                project={project()}
-                directory={session.location.directory}
-                sessionId={session.id}
-                server={props.server}
-              />
-            )}
+            <Show
+              when={props.session}
+              keyed
+              fallback={
+                <Show
+                  when={props.preparing}
+                  fallback={
+                    <span class="block size-4 rounded-[3px] border border-v2-border-border-muted" aria-hidden="true" />
+                  }
+                >
+                  <SessionProgressIndicatorV2 />
+                </Show>
+              }
+            >
+              {(session) => (
+                <SessionTabAvatar
+                  project={project()}
+                  directory={session.location.directory}
+                  sessionId={session.id}
+                  server={props.server}
+                />
+              )}
+            </Show>
           </Show>
         </span>
         <span

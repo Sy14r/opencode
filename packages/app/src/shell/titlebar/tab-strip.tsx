@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, For, onCleanup, Show } from "solid-js"
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { DragDropProvider, PointerSensor, useDraggable, useDroppable } from "@dnd-kit/solid"
 import { isSortable, useSortable } from "@dnd-kit/solid/sortable"
@@ -6,7 +6,7 @@ import { Accessibility, AutoScroller, Feedback, PointerActivationConstraints } f
 import { RestrictToHorizontalAxis, RestrictToVerticalAxis } from "@dnd-kit/abstract/modifiers"
 import { RestrictToElement } from "@dnd-kit/dom/modifiers"
 import { arrayMove } from "@dnd-kit/helpers"
-import { displayName } from "@opencode/ui/project-avatar"
+import { displayName, getProjectAvatarSource, getProjectAvatarVariant, ProjectAvatar } from "@opencode/ui/project-avatar"
 import { Icon } from "@opencode/ui/icon"
 import { moveSessionDirectory } from "@/session/commands/move"
 import { tabHref, tabKey, type SessionTab, type Tab } from "@/shell/tabs/tabs"
@@ -25,6 +25,14 @@ import { base64Encode } from "@opencode/util/encode"
 import { showToast } from "@/shell/notifications/toast"
 import { adjacentTabKey, mergeVisibleTabOrder } from "./tab-order"
 import type { SessionInfo } from "@opencode/client/promise"
+
+type TabProject = {
+  worktree: string
+  name: string
+  server: string
+  id?: string
+  icon?: { url?: string; override?: string; color?: string }
+}
 
 function SessionTabSlot(props: {
   tab: SessionTab
@@ -93,7 +101,7 @@ function SessionTabEntry(props: {
   orientation: "horizontal" | "vertical"
   serverCtx: ServerCtx | undefined
   onVisibleChange: (visible: boolean) => void
-  onProjectChange: (project: { worktree: string; name: string; server: string } | undefined) => void
+  onProjectChange: (project: TabProject | undefined) => void
   hideProject: boolean
   onNavigate: (element: HTMLDivElement) => void
   onClose: () => void
@@ -162,7 +170,13 @@ function SessionTabEntry(props: {
 
     props.onProjectChange(
       project
-        ? { worktree: project.worktree, name: displayName(project), server: props.tab.server }
+        ? {
+            worktree: project.worktree,
+            name: displayName(project),
+            server: props.tab.server,
+            id: project.id,
+            icon: project.icon,
+          }
         : undefined,
     )
   })
@@ -283,6 +297,7 @@ function DraftTabSlot(props: {
 
 function TabGroupHeader(props: {
   worktree: string | null
+  project: TabProject | null
   name: string
   count: number
   collapsed: boolean
@@ -325,6 +340,13 @@ function TabGroupHeader(props: {
         aria-label={props.collapsed ? language.t("common.expand") : language.t("common.collapse")}
         onClick={props.onToggle}
       />
+      <span class="flex size-4 shrink-0 items-center justify-center">
+        <ProjectAvatar
+          fallback={props.name}
+          src={getProjectAvatarSource(props.project?.id, props.project?.icon)}
+          variant={getProjectAvatarVariant(props.project?.icon?.color)}
+        />
+      </span>
       <button
         type="button"
         aria-label={props.name}
@@ -345,7 +367,7 @@ function TitlebarTabItem(props: {
   hideProject: boolean
   visibleTabs: Tab[]
   onVisibleChange: (visible: boolean) => void
-  onProjectChange: (project: { worktree: string; name: string; server: string } | undefined) => void
+  onProjectChange: (project: TabProject | undefined) => void
   onNavigate: (tab: Tab, el?: HTMLDivElement) => void
   onClose: (tab: Tab) => void
 }) {
@@ -418,9 +440,7 @@ export function TitlebarTabStrip(props: {
   const [visibility, setVisibility] = createStore<Record<string, boolean>>({})
 
   // Project clustering for tab groups, reported by entries that resolve their session.
-  const [tabProjects, setTabProjects] = createStore<
-    Record<string, { worktree: string; name: string; server: string } | undefined>
-  >({})
+  const [tabProjects, setTabProjects] = createStore<Record<string, TabProject | undefined>>({})
 
   const layout = useLayout()
 
@@ -442,7 +462,7 @@ export function TitlebarTabStrip(props: {
 
   const visibleTabIds = () => visibleTabs().map(tabKey)
 
-  type TitlebarTabGroup = { key: string | null; name: string; server: string | null; tabs: Tab[] }
+  type TitlebarTabGroup = { key: string | null; name: string; server: string | null; project: TabProject | null; tabs: Tab[] }
 
   const groups = createMemo(() => {
     const list: TitlebarTabGroup[] = []
@@ -458,6 +478,7 @@ export function TitlebarTabStrip(props: {
           key,
           name: project?.name ?? language.t("tabs.group.ungrouped"),
           server: project?.server ?? null,
+          project: project ?? null,
           tabs: [],
         }
         byKey.set(key, group)
@@ -470,20 +491,21 @@ export function TitlebarTabStrip(props: {
     return list
   })
 
-  const reportTabProject = (tab: Tab, project: { worktree: string; name: string; server: string } | undefined) => {
+  const reportTabProject = (tab: Tab, project: TabProject | undefined) => {
     const id = tabKey(tab)
     const current = tabProjects[id]
 
     if (
       current?.worktree === project?.worktree &&
       current?.name === project?.name &&
-      current?.server === project?.server
+      current?.server === project?.server &&
+      current?.id === project?.id &&
+      current?.icon?.color === project?.icon?.color &&
+      current?.icon?.url === project?.icon?.url &&
+      current?.icon?.override === project?.icon?.override
     )
       return
-    setTabProjects(
-      id,
-      project ? { worktree: project.worktree, name: project.name, server: project.server } : undefined,
-    )
+    setTabProjects(id, project ? { ...project, icon: project.icon ? { ...project.icon } : undefined } : undefined)
   }
 
   command.register("titlebar-tab-cycle", () => [
@@ -535,7 +557,7 @@ export function TitlebarTabStrip(props: {
 
   // Swallow the click a drop lands as: without this, dropping onto a group
   // header also toggles its collapse.
-  let lastHeaderDrop = 0
+  const [lastHeaderDrop, setLastHeaderDrop] = createSignal(0)
 
   const moveGroupBefore = (worktree: string, target: string) => {
     if (worktree === target) return
@@ -550,7 +572,7 @@ export function TitlebarTabStrip(props: {
     const rest = full.filter((key) => keyOf.get(key) !== worktree)
     const index = rest.indexOf(anchor)
 
-    lastHeaderDrop = Date.now()
+    setLastHeaderDrop(Date.now())
     props.onReorder([...rest.slice(0, index), ...block, ...rest.slice(index)])
   }
 
@@ -619,7 +641,7 @@ export function TitlebarTabStrip(props: {
             if (activeId.startsWith("tab-group-drag:")) {
               if (event.canceled || !targetId?.startsWith("tab-group:")) return
 
-              lastHeaderDrop = Date.now()
+              setLastHeaderDrop(Date.now())
               moveGroupBefore(activeId.slice("tab-group-drag:".length), targetId.slice("tab-group:".length))
 
               return
@@ -633,7 +655,7 @@ export function TitlebarTabStrip(props: {
               const tab = props.tabs.find((item) => tabKey(item) === source.id.toString())
 
               if (tab) {
-                lastHeaderDrop = Date.now()
+                setLastHeaderDrop(Date.now())
                 void moveTabToProject(tab, targetId.slice("tab-group:".length))
               }
 
@@ -690,19 +712,20 @@ export function TitlebarTabStrip(props: {
                   <>
                     <TabGroupHeader
                       worktree={group.key}
+                      project={group.project}
                       name={group.name}
                       count={group.tabs.length}
                       collapsed={group.key === null ? false : layout.tabGroups.collapsed(group.key)}
                       orientation={vertical() ? "vertical" : "horizontal"}
                       onToggle={() => {
-                        if (Date.now() - lastHeaderDrop < 350) return
+                        if (Date.now() - lastHeaderDrop() < 350) return
 
                         const key = group.key
 
                         if (key) layout.tabGroups.toggle(key)
                       }}
                       onOpenProject={() => {
-                        if (Date.now() - lastHeaderDrop < 350) return
+                        if (Date.now() - lastHeaderDrop() < 350) return
 
                         if (group.key && group.server) surface.openProject({ server: group.server, project: group.key })
                       }}

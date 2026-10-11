@@ -603,6 +603,8 @@ export const dict = {
   "common.moreCountSuffix": " (+{{count}} more)",
   "common.requestFailed": "Request failed",
   "common.moreOptions": "More options",
+  "common.expand": "Expand",
+  "common.collapse": "Collapse",
   "common.learnMore": "Learn more",
   "common.rename": "Rename",
   "common.export": "Export",

@@ -14,7 +14,9 @@ import { ServerConnection } from "@/runtime/server/registry"
 import { DraftTabItem, TabNavItem } from "@/shell/titlebar/tab-nav"
 import { useGlobal, useServerCtx, type ServerCtx } from "@/runtime/server/runtime"
 import { useLayout } from "@/shell/state/layout"
+import { useSettingsSurface } from "@/settings/surface"
 import { useLanguage } from "@/runtime/i18n/language"
+import { IconButton } from "@opencode/ui/icon-button"
 import { useSettings } from "@/settings/model"
 import { useCommand } from "@/shell/commands/command"
 import { useTabs } from "@/shell/tabs/tabs"
@@ -91,7 +93,7 @@ function SessionTabEntry(props: {
   orientation: "horizontal" | "vertical"
   serverCtx: ServerCtx | undefined
   onVisibleChange: (visible: boolean) => void
-  onProjectChange: (project: { worktree: string; name: string } | undefined) => void
+  onProjectChange: (project: { worktree: string; name: string; server: string } | undefined) => void
   hideProject: boolean
   onNavigate: (element: HTMLDivElement) => void
   onClose: () => void
@@ -158,7 +160,11 @@ function SessionTabEntry(props: {
 
     const project = ctx.projects.forSession(value)
 
-    props.onProjectChange(project ? { worktree: project.worktree, name: displayName(project) } : undefined)
+    props.onProjectChange(
+      project
+        ? { worktree: project.worktree, name: displayName(project), server: props.tab.server }
+        : undefined,
+    )
   })
 
   createEffect(() => {
@@ -282,7 +288,11 @@ function TabGroupHeader(props: {
   collapsed: boolean
   orientation: "horizontal" | "vertical"
   onToggle: () => void
+  onOpenProject: () => void
 }) {
+  const language = useLanguage()
+  const navigable = () => props.worktree !== null
+
   const droppable = useDroppable({
     id: props.worktree === null ? "tab-group-ungrouped" : `tab-group:${props.worktree}`,
     disabled: props.worktree === null,
@@ -294,27 +304,37 @@ function TabGroupHeader(props: {
   })
 
   return (
-    <button
+    <div
       ref={(element) => {
         droppable.ref(element)
         draggable.ref(element)
       }}
-      type="button"
       data-slot="titlebar-tab-group"
       data-collapsed={props.collapsed}
-      aria-expanded={!props.collapsed}
-      class="flex h-7 min-w-0 shrink-0 cursor-default items-center gap-1.5 rounded-[6px] px-1.5 text-start text-[12px] text-v2-text-text-muted hover:bg-v2-overlay-simple-overlay-hover focus-visible:outline-none"
+      class="flex h-7 min-w-0 shrink-0 items-center gap-0.5 rounded-[6px] text-[12px] text-v2-text-text-muted"
       classList={{
         "w-full": props.orientation === "vertical",
         "outline-dashed outline-1 outline-v2-border-border-focus": droppable.isDropTarget(),
         "opacity-50": draggable.isDragging(),
       }}
-      onClick={props.onToggle}
     >
-      <Icon name={props.collapsed ? "chevron-right" : "chevron-down"} size="small" />
-      <span class="min-w-0 flex-1 truncate">{props.name}</span>
-      <span class="shrink-0">{props.count}</span>
-    </button>
+      <IconButton
+        size="small"
+        variant="ghost-muted"
+        icon={<Icon name={props.collapsed ? "chevron-right" : "chevron-down"} size="small" />}
+        aria-label={props.collapsed ? language.t("common.expand") : language.t("common.collapse")}
+        onClick={props.onToggle}
+      />
+      <button
+        type="button"
+        aria-label={props.name}
+        class="min-w-0 flex-1 truncate rounded-[4px] px-1 py-0.5 text-start hover:bg-v2-overlay-simple-overlay-hover hover:text-v2-text-text-base focus-visible:outline-none"
+        onClick={() => (navigable() ? props.onOpenProject() : props.onToggle())}
+      >
+        {props.name}
+      </button>
+      <span class="shrink-0 pr-1.5">{props.count}</span>
+    </div>
   )
 }
 
@@ -325,7 +345,7 @@ function TitlebarTabItem(props: {
   hideProject: boolean
   visibleTabs: Tab[]
   onVisibleChange: (visible: boolean) => void
-  onProjectChange: (project: { worktree: string; name: string } | undefined) => void
+  onProjectChange: (project: { worktree: string; name: string; server: string } | undefined) => void
   onNavigate: (tab: Tab, el?: HTMLDivElement) => void
   onClose: (tab: Tab) => void
 }) {
@@ -392,14 +412,15 @@ export function TitlebarTabStrip(props: {
   const command = useCommand()
   const settings = useSettings()
   const global = useGlobal()
+  const surface = useSettingsSurface()
   const vertical = () => props.orientation === "vertical"
   let listRef!: HTMLDivElement
   const [visibility, setVisibility] = createStore<Record<string, boolean>>({})
 
   // Project clustering for tab groups, reported by entries that resolve their session.
-  const [tabProjects, setTabProjects] = createStore<Record<string, { worktree: string; name: string } | undefined>>(
-    {},
-  )
+  const [tabProjects, setTabProjects] = createStore<
+    Record<string, { worktree: string; name: string; server: string } | undefined>
+  >({})
 
   const layout = useLayout()
 
@@ -421,7 +442,7 @@ export function TitlebarTabStrip(props: {
 
   const visibleTabIds = () => visibleTabs().map(tabKey)
 
-  type TitlebarTabGroup = { key: string | null; name: string; tabs: Tab[] }
+  type TitlebarTabGroup = { key: string | null; name: string; server: string | null; tabs: Tab[] }
 
   const groups = createMemo(() => {
     const list: TitlebarTabGroup[] = []
@@ -433,7 +454,12 @@ export function TitlebarTabStrip(props: {
       let group = byKey.get(key)
 
       if (!group) {
-        group = { key, name: project?.name ?? language.t("tabs.group.ungrouped"), tabs: [] }
+        group = {
+          key,
+          name: project?.name ?? language.t("tabs.group.ungrouped"),
+          server: project?.server ?? null,
+          tabs: [],
+        }
         byKey.set(key, group)
         list.push(group)
       }
@@ -444,12 +470,20 @@ export function TitlebarTabStrip(props: {
     return list
   })
 
-  const reportTabProject = (tab: Tab, project: { worktree: string; name: string } | undefined) => {
+  const reportTabProject = (tab: Tab, project: { worktree: string; name: string; server: string } | undefined) => {
     const id = tabKey(tab)
     const current = tabProjects[id]
 
-    if (current?.worktree === project?.worktree && current?.name === project?.name) return
-    setTabProjects(id, project ? { worktree: project.worktree, name: project.name } : undefined)
+    if (
+      current?.worktree === project?.worktree &&
+      current?.name === project?.name &&
+      current?.server === project?.server
+    )
+      return
+    setTabProjects(
+      id,
+      project ? { worktree: project.worktree, name: project.name, server: project.server } : undefined,
+    )
   }
 
   command.register("titlebar-tab-cycle", () => [
@@ -666,6 +700,11 @@ export function TitlebarTabStrip(props: {
                         const key = group.key
 
                         if (key) layout.tabGroups.toggle(key)
+                      }}
+                      onOpenProject={() => {
+                        if (Date.now() - lastHeaderDrop < 350) return
+
+                        if (group.key && group.server) surface.openProject({ server: group.server, project: group.key })
                       }}
                     />
                     <Show when={group.key === null || !layout.tabGroups.collapsed(group.key)}>

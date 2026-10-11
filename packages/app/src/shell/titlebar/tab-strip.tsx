@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createResource, For, onCleanup, Show } from "solid-js"
 import { createStore } from "solid-js/store"
-import { DragDropProvider, PointerSensor } from "@dnd-kit/solid"
+import { DragDropProvider, PointerSensor, useDroppable } from "@dnd-kit/solid"
 import { isSortable, useSortable } from "@dnd-kit/solid/sortable"
 import { Accessibility, AutoScroller, Feedback, PointerActivationConstraints } from "@dnd-kit/dom"
 import { RestrictToHorizontalAxis, RestrictToVerticalAxis } from "@dnd-kit/abstract/modifiers"
@@ -8,10 +8,12 @@ import { RestrictToElement } from "@dnd-kit/dom/modifiers"
 import { arrayMove } from "@dnd-kit/helpers"
 import { displayName } from "@opencode/ui/project-avatar"
 import { Icon } from "@opencode/ui/icon"
+import { moveSessionDirectory } from "@/session/commands/move"
 import { tabHref, tabKey, type SessionTab, type Tab } from "@/shell/tabs/tabs"
 import { ServerConnection } from "@/runtime/server/registry"
 import { DraftTabItem, TabNavItem } from "@/shell/titlebar/tab-nav"
 import { useGlobal, useServerCtx, type ServerCtx } from "@/runtime/server/runtime"
+import { useLayout } from "@/shell/state/layout"
 import { useLanguage } from "@/runtime/i18n/language"
 import { useSettings } from "@/settings/model"
 import { useCommand } from "@/shell/commands/command"
@@ -274,20 +276,30 @@ function DraftTabSlot(props: {
 }
 
 function TabGroupHeader(props: {
+  worktree: string | null
   name: string
   count: number
   collapsed: boolean
   orientation: "horizontal" | "vertical"
   onToggle: () => void
 }) {
+  const droppable = useDroppable({
+    id: props.worktree === null ? "tab-group-ungrouped" : `tab-group:${props.worktree}`,
+    disabled: props.worktree === null,
+  })
+
   return (
     <button
+      ref={droppable.ref}
       type="button"
       data-slot="titlebar-tab-group"
       data-collapsed={props.collapsed}
       aria-expanded={!props.collapsed}
       class="flex h-7 min-w-0 shrink-0 cursor-default items-center gap-1.5 rounded-[6px] px-1.5 text-start text-[12px] text-v2-text-text-muted hover:bg-v2-overlay-simple-overlay-hover focus-visible:outline-none"
-      classList={{ "w-full": props.orientation === "vertical" }}
+      classList={{
+        "w-full": props.orientation === "vertical",
+        "outline-dashed outline-1 outline-v2-border-border-focus": droppable.isDropTarget(),
+      }}
       onClick={props.onToggle}
     >
       <Icon name={props.collapsed ? "chevron-right" : "chevron-down"} size="small" />
@@ -370,6 +382,7 @@ export function TitlebarTabStrip(props: {
   const language = useLanguage()
   const command = useCommand()
   const settings = useSettings()
+  const global = useGlobal()
   const vertical = () => props.orientation === "vertical"
   let listRef!: HTMLDivElement
   const [visibility, setVisibility] = createStore<Record<string, boolean>>({})
@@ -379,7 +392,7 @@ export function TitlebarTabStrip(props: {
     {},
   )
 
-  const [collapsed, setCollapsed] = createStore<Record<string, boolean>>({})
+  const layout = useLayout()
 
   const grouped = () => settings.appearance.tabGroups() === "project"
 
@@ -393,7 +406,7 @@ export function TitlebarTabStrip(props: {
 
       const key = groupKey(tab)
 
-      return !key || !collapsed[key]
+      return !key || !layout.tabGroups.collapsed(key)
     }),
   )
 
@@ -448,6 +461,34 @@ export function TitlebarTabStrip(props: {
       onSelect: () => selectAdjacentTab(1),
     },
   ])
+
+  const moveTabToProject = async (tab: Tab, worktree: string) => {
+    if (tab.type !== "session") return
+
+    const conn = global.servers.list().find((item) => ServerConnection.key(item) === tab.server)
+    const ctx = conn ? global.serverCtx(ServerConnection.key(conn)) : undefined
+
+    if (!ctx) return
+
+    const current =
+      ctx.data.session.get(tab.sessionId) ??
+      (await ctx.sdk.api.session.get({ sessionID: tab.sessionId }).catch(() => undefined))
+
+    if (!current) return
+
+    const project = ctx.projects.forSession(current)
+
+    if (!project || project.worktree === worktree) return
+
+    await moveSessionDirectory({
+      api: ctx.sdk.api,
+      projects: ctx.projects,
+      sessions: ctx.data.session,
+      session: current,
+      directory: worktree,
+      language,
+    })
+  }
 
   function selectAdjacentTab(offset: -1 | 1) {
     const current = props.currentTab
@@ -506,6 +547,21 @@ export function TitlebarTabStrip(props: {
             props.onNavigate(tab, tabEl ?? undefined)
           }}
           onDragEnd={(event) => {
+            const target = event.operation.target
+            const targetId = target ? `${target.id}` : undefined
+
+            if (targetId?.startsWith("tab-group:")) {
+              const source = event.operation.source
+
+              if (event.canceled || !source) return
+
+              const tab = props.tabs.find((item) => tabKey(item) === source.id.toString())
+
+              if (tab) void moveTabToProject(tab, targetId.slice("tab-group:".length))
+
+              return
+            }
+
             const current = visibleTabIds()
             const source = event.operation.source
 
@@ -555,17 +611,18 @@ export function TitlebarTabStrip(props: {
                 {(group) => (
                   <>
                     <TabGroupHeader
+                      worktree={group.key}
                       name={group.name}
                       count={group.tabs.length}
-                      collapsed={!!group.key && !!collapsed[group.key]}
+                      collapsed={group.key === null ? false : layout.tabGroups.collapsed(group.key)}
                       orientation={vertical() ? "vertical" : "horizontal"}
                       onToggle={() => {
                         const key = group.key
 
-                        if (key) setCollapsed(key, (value) => !value)
+                        if (key) layout.tabGroups.toggle(key)
                       }}
                     />
-                    <Show when={!group.key || !collapsed[group.key]}>
+                    <Show when={group.key === null || !layout.tabGroups.collapsed(group.key)}>
                       <For each={group.tabs}>
                         {(tab) => (
                           <TitlebarTabItem

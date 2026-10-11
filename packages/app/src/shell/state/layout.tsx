@@ -85,6 +85,10 @@ const sessionTabsSchema = Persistence.struct({
   active: Persistence.optional(Schema.String),
 })
 
+const tabGroupsSchema = Persistence.struct({
+  collapsed: Persistence.record(Schema.Boolean),
+})
+
 const sessionViewSchema = Persistence.struct({
   scroll: Persistence.record(Schema.Struct({ x: Schema.Finite, y: Schema.Finite })),
   // Review state from before extensions. An extension copies each session's entry out once; nothing writes these
@@ -121,6 +125,7 @@ export const layoutSchema = Persistence.struct({
   mobileSidebar: Persistence.struct({ opened: Schema.Boolean }),
   sessionTabs: Persistence.record(Persistence.fallback(sessionTabsSchema, () => ({ all: [] }))),
   sessionView: Persistence.record(Persistence.fallback(sessionViewSchema, () => ({ scroll: {} }))),
+  tabGroups: Persistence.fallback(tabGroupsSchema, () => ({ collapsed: {} })),
   home: Persistence.struct({
     selection: Persistence.struct({
       server: Schema.optional(TabStorage.ServerKey),
@@ -193,6 +198,7 @@ export function initialLayout(server?: ServerConnection.Key): typeof layoutSchem
     mobileSidebar: { opened: false },
     sessionTabs: {},
     sessionView: {},
+    tabGroups: { collapsed: {} },
     home: { selection: server ? { server } : {} },
   }
 }
@@ -440,6 +446,12 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         },
         toggle() {
           setStore("mobileSidebar", "opened", (x) => !x)
+        },
+      },
+      tabGroups: {
+        collapsed: (worktree: string) => store.tabGroups?.collapsed[worktree] ?? false,
+        toggle(worktree: string) {
+          setStore("tabGroups", "collapsed", worktree, (value) => !value)
         },
       },
       pendingMessage: {

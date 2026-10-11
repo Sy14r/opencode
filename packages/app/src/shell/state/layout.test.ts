@@ -39,6 +39,7 @@ describe("layout persistence", () => {
       mobileSidebar: { opened: false },
       sessionTabs: {},
       sessionView: {},
+      tabGroups: { collapsed: {} },
       home: { selection: { server: ServerConnection.Key.make("local") } },
     })
     expect(

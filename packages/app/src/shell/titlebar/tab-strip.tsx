@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createResource, For, onCleanup, Show } from "solid-js"
 import { createStore } from "solid-js/store"
-import { DragDropProvider, PointerSensor, useDroppable } from "@dnd-kit/solid"
+import { DragDropProvider, PointerSensor, useDraggable, useDroppable } from "@dnd-kit/solid"
 import { isSortable, useSortable } from "@dnd-kit/solid/sortable"
 import { Accessibility, AutoScroller, Feedback, PointerActivationConstraints } from "@dnd-kit/dom"
 import { RestrictToHorizontalAxis, RestrictToVerticalAxis } from "@dnd-kit/abstract/modifiers"
@@ -288,9 +288,17 @@ function TabGroupHeader(props: {
     disabled: props.worktree === null,
   })
 
+  const draggable = useDraggable({
+    id: props.worktree === null ? "tab-group-drag-ungrouped" : `tab-group-drag:${props.worktree}`,
+    disabled: props.worktree === null,
+  })
+
   return (
     <button
-      ref={droppable.ref}
+      ref={(element) => {
+        droppable.ref(element)
+        draggable.ref(element)
+      }}
       type="button"
       data-slot="titlebar-tab-group"
       data-collapsed={props.collapsed}
@@ -299,6 +307,7 @@ function TabGroupHeader(props: {
       classList={{
         "w-full": props.orientation === "vertical",
         "outline-dashed outline-1 outline-v2-border-border-focus": droppable.isDropTarget(),
+        "opacity-50": draggable.isDragging(),
       }}
       onClick={props.onToggle}
     >
@@ -490,6 +499,27 @@ export function TitlebarTabStrip(props: {
     })
   }
 
+  // Swallow the click a drop lands as: without this, dropping onto a group
+  // header also toggles its collapse.
+  let lastHeaderDrop = 0
+
+  const moveGroupBefore = (worktree: string, target: string) => {
+    if (worktree === target) return
+
+    const full = props.tabs.map(tabKey)
+    const keyOf = new Map(props.tabs.map((tab) => [tabKey(tab), groupKey(tab)]))
+    const block = full.filter((key) => keyOf.get(key) === worktree)
+    const anchor = full.find((key) => keyOf.get(key) === target)
+
+    if (block.length === 0 || !anchor) return
+
+    const rest = full.filter((key) => keyOf.get(key) !== worktree)
+    const index = rest.indexOf(anchor)
+
+    lastHeaderDrop = Date.now()
+    props.onReorder([...rest.slice(0, index), ...block, ...rest.slice(index)])
+  }
+
   function selectAdjacentTab(offset: -1 | 1) {
     const current = props.currentTab
     const key = adjacentTabKey(visibleTabIds(), current ? tabKey(current) : undefined, offset)
@@ -547,8 +577,19 @@ export function TitlebarTabStrip(props: {
             props.onNavigate(tab, tabEl ?? undefined)
           }}
           onDragEnd={(event) => {
+            const activeId = `${event.operation.source?.id ?? ""}`
             const target = event.operation.target
             const targetId = target ? `${target.id}` : undefined
+
+            // Project header drag: relocate the whole block before the target group.
+            if (activeId.startsWith("tab-group-drag:")) {
+              if (event.canceled || !targetId?.startsWith("tab-group:")) return
+
+              lastHeaderDrop = Date.now()
+              moveGroupBefore(activeId.slice("tab-group-drag:".length), targetId.slice("tab-group:".length))
+
+              return
+            }
 
             if (targetId?.startsWith("tab-group:")) {
               const source = event.operation.source
@@ -557,7 +598,10 @@ export function TitlebarTabStrip(props: {
 
               const tab = props.tabs.find((item) => tabKey(item) === source.id.toString())
 
-              if (tab) void moveTabToProject(tab, targetId.slice("tab-group:".length))
+              if (tab) {
+                lastHeaderDrop = Date.now()
+                void moveTabToProject(tab, targetId.slice("tab-group:".length))
+              }
 
               return
             }
@@ -617,6 +661,8 @@ export function TitlebarTabStrip(props: {
                       collapsed={group.key === null ? false : layout.tabGroups.collapsed(group.key)}
                       orientation={vertical() ? "vertical" : "horizontal"}
                       onToggle={() => {
+                        if (Date.now() - lastHeaderDrop < 350) return
+
                         const key = group.key
 
                         if (key) layout.tabGroups.toggle(key)

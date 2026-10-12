@@ -466,6 +466,23 @@ const Root = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCODE_CLI_NAME
             ),
           },
         }),
+        Spec.make("watch", {
+          description: "Stream live per-session status over local HTTP for external integrations",
+          params: {
+            ...ServerParams,
+            port: Flag.Int("port").pipe(
+              Flag.withSchema(
+                Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(65535)),
+              ),
+              Flag.withDescription("Local port for the status endpoint"),
+              Flag.withDefault(4097),
+            ),
+            once: Flag.Boolean("once").pipe(
+              Flag.withDescription("Print one JSON snapshot and exit instead of serving"),
+              Flag.withDefault(false),
+            ),
+          },
+        }),
       ],
     }),
     Spec.make("service", {

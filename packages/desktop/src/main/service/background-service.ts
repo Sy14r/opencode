@@ -2,6 +2,7 @@ import { app } from "electron"
 import { Context, Effect, FileSystem, Layer, Path } from "effect"
 import { BackgroundServiceState } from "./background-service-state"
 import { cleanStages } from "./cli-stages"
+import { describeIsolatedPortConflict, ISOLATED_PORT, probeIsolatedPort } from "./isolated-port"
 import { DesktopCli } from "./desktop-cli"
 import { SidecarCredentials } from "./sidecar-credentials"
 import { sidecarProbe } from "./sidecar-probe"
@@ -38,7 +39,14 @@ const connect = Effect.fn("BackgroundService.connect")(function* (mode: "initial
   const cli = yield* desktopCli.resolve
   const version = mode === "initial" ? cli.version : undefined
 
-  if (isolated) process.env.XDG_STATE_HOME = app.getPath("userData")
+  if (isolated) {
+    process.env.XDG_STATE_HOME = app.getPath("userData")
+
+    const probe = yield* Effect.promise(() => probeIsolatedPort("127.0.0.1", ISOLATED_PORT))
+
+    if (probe.status === "occupied") throw new Error(describeIsolatedPortConflict(probe))
+  }
+
   const client = yield* Effect.promise(() => import("@opencode/client/service"))
 
   const ensure = () =>
@@ -54,7 +62,7 @@ const connect = Effect.fn("BackgroundService.connect")(function* (mode: "initial
         ...cli.command,
         "serve",
         "--service",
-        ...(isolated ? ["--hostname", "0.0.0.0", "--port", String(0x0c0c)] : []),
+        ...(isolated ? ["--hostname", "0.0.0.0", "--port", String(ISOLATED_PORT)] : []),
       ],
       onStart: (reason, previousVersion) =>
         runFork(Effect.logInfo("v2 CLI background service starting", { reason, previousVersion })),

@@ -299,11 +299,11 @@ function TabGroupHeader(props: {
   worktree: string | null
   project: TabProject | null
   name: string
-  count: number
   collapsed: boolean
   orientation: "horizontal" | "vertical"
   onToggle: () => void
   onOpenProject: () => void
+  onNewSession?: () => void
 }) {
   const language = useLanguage()
   const navigable = () => props.worktree !== null
@@ -326,7 +326,7 @@ function TabGroupHeader(props: {
       }}
       data-slot="titlebar-tab-group"
       data-collapsed={props.collapsed}
-      class="flex h-7 min-w-0 shrink-0 items-center gap-0.5 rounded-[6px] text-[12px] text-v2-text-text-muted"
+      class="group/tab-group flex h-7 min-w-0 shrink-0 items-center gap-0.5 rounded-[6px] text-[12px] text-v2-text-text-muted"
       classList={{
         "w-full": props.orientation === "vertical",
         "outline-dashed outline-1 outline-v2-border-border-focus": droppable.isDropTarget(),
@@ -355,7 +355,23 @@ function TabGroupHeader(props: {
       >
         {props.name}
       </button>
-      <span class="shrink-0 pr-1.5">{props.count}</span>
+      <Show when={props.onNewSession}>
+        {(onNewSession) => (
+          <IconButton
+            data-action="titlebar-tab-group-new-session"
+            variant="ghost-muted"
+            size="small"
+            icon={<Icon name="edit" />}
+            aria-label={language.t("command.session.new")}
+            class="hover-reveal shrink-0 group-hover/tab-group:opacity-100 focus-visible:opacity-100"
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              onNewSession()()
+            }}
+          />
+        )}
+      </Show>
     </div>
   )
 }
@@ -435,6 +451,7 @@ export function TitlebarTabStrip(props: {
   const settings = useSettings()
   const global = useGlobal()
   const surface = useSettingsSurface()
+  const tabs = useTabs()
   const vertical = () => props.orientation === "vertical"
   let listRef!: HTMLDivElement
   const [visibility, setVisibility] = createStore<Record<string, boolean>>({})
@@ -462,7 +479,13 @@ export function TitlebarTabStrip(props: {
 
   const visibleTabIds = () => visibleTabs().map(tabKey)
 
-  type TitlebarTabGroup = { key: string | null; name: string; server: string | null; project: TabProject | null; tabs: Tab[] }
+  type TitlebarTabGroup = {
+    readonly key: string | null
+    readonly name: string
+    readonly server: string | null
+    readonly project: TabProject | null
+    readonly tabs: Tab[]
+  }
 
   const groups = createMemo(() => {
     const list: TitlebarTabGroup[] = []
@@ -574,6 +597,17 @@ export function TitlebarTabStrip(props: {
 
     setLastHeaderDrop(Date.now())
     props.onReorder([...rest.slice(0, index), ...block, ...rest.slice(index)])
+  }
+
+  const openProjectNewSession = (serverKey: string, directory: string) => {
+    const conn = global.servers.list().find((item) => ServerConnection.key(item) === serverKey)
+
+    if (!conn) return
+
+    const ctx = global.ensureServerCtx(conn)
+    ctx.projects.open(directory)
+    ctx.projects.touch(directory)
+    void tabs.newDraft({ server: ServerConnection.key(conn), directory })
   }
 
   function selectAdjacentTab(offset: -1 | 1) {
@@ -714,7 +748,6 @@ export function TitlebarTabStrip(props: {
                       worktree={group.key}
                       project={group.project}
                       name={group.name}
-                      count={group.tabs.length}
                       collapsed={group.key === null ? false : layout.tabGroups.collapsed(group.key)}
                       orientation={vertical() ? "vertical" : "horizontal"}
                       onToggle={() => {
@@ -729,6 +762,11 @@ export function TitlebarTabStrip(props: {
 
                         if (group.key && group.server) surface.openProject({ server: group.server, project: group.key })
                       }}
+                      onNewSession={
+                        group.key && group.server
+                          ? openProjectNewSession.bind(null, group.server, group.key)
+                          : undefined
+                      }
                     />
                     <Show when={group.key === null || !layout.tabGroups.collapsed(group.key)}>
                       <div

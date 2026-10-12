@@ -731,21 +731,27 @@ export function TitlebarTabStrip(props: {
                       }}
                     />
                     <Show when={group.key === null || !layout.tabGroups.collapsed(group.key)}>
-                      <For each={group.tabs}>
-                        {(tab) => (
-                          <TitlebarTabItem
-                            tab={tab}
-                            orientation={vertical() ? "vertical" : "horizontal"}
-                            active={props.currentTab === tab}
-                            hideProject={group.key !== null}
-                            visibleTabs={visibleTabs()}
-                            onVisibleChange={(visible) => setVisibility(tabKey(tab), visible)}
-                            onProjectChange={(project) => reportTabProject(tab, project)}
-                            onNavigate={props.onNavigate}
-                            onClose={props.onClose}
-                          />
-                        )}
-                      </For>
+                      <div
+                        data-slot="titlebar-tab-group-items"
+                        class="min-w-0"
+                        classList={{ "ps-5": vertical(), contents: !vertical() }}
+                      >
+                        <For each={group.tabs}>
+                          {(tab) => (
+                            <TitlebarTabItem
+                              tab={tab}
+                              orientation={vertical() ? "vertical" : "horizontal"}
+                              active={props.currentTab === tab}
+                              hideProject={group.key !== null}
+                              visibleTabs={visibleTabs()}
+                              onVisibleChange={(visible) => setVisibility(tabKey(tab), visible)}
+                              onProjectChange={(project) => reportTabProject(tab, project)}
+                              onNavigate={props.onNavigate}
+                              onClose={props.onClose}
+                            />
+                          )}
+                        </For>
+                      </div>
                     </Show>
                   </>
                 )}

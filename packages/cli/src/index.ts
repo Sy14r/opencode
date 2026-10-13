@@ -68,6 +68,7 @@ const Handlers = Runtime.handlers(Commands, {
     delete: () => import("./commands/handlers/session/delete"),
     export: () => import("./commands/handlers/session/export"),
     import: () => import("./commands/handlers/session/import"),
+    watch: () => import("./commands/handlers/session/watch"),
   },
   service: {
     start: () => import("./commands/handlers/service/start"),

@@ -8,10 +8,12 @@ import { IconButton } from "@opencode/ui/icon-button"
 import { Icon } from "@opencode/ui/icon"
 import { Menu } from "@opencode/ui/menu"
 import { useServerCtx } from "@/runtime/server/runtime"
+import { useDirectoryPicker } from "@/workspaces/selection/picker"
+import { moveSessionDirectory } from "@/session/commands/move"
 import { useLanguage } from "@/runtime/i18n/language"
 import { ServerConnection, serverName, useServers } from "@/runtime/server/registry"
 import { displayName } from "@opencode/ui/project-avatar"
-import { SessionTabAvatar } from "@/shell/layout/session-tab-avatar"
+import { SessionStatusDot, SessionTabAvatar } from "@/shell/layout/session-tab-avatar"
 import { SessionProgressIndicatorV2 } from "@opencode/session-ui/v2/session-progress-indicator-v2"
 import type { SessionInfo } from "@opencode/client/promise"
 import { sessionTabTitle } from "./tab-title"
@@ -31,6 +33,7 @@ export function TabNavItem(props: {
   onRename: (title: string) => Promise<void>
   onClose: () => void
   onNavigate: () => void
+  hideProject?: boolean
   active?: boolean
   suppressNavigation?: boolean
   dragging?: boolean
@@ -55,6 +58,33 @@ export function TabNavItem(props: {
 
   const servers = useServers()
   const serverCtx = useServerCtx(() => servers.list.find((item) => ServerConnection.key(item) === props.server))
+  const pickDirectory = useDirectoryPicker()
+
+  const move = () => {
+    const session = props.session
+    const conn = servers.list.find((item) => ServerConnection.key(item) === props.server)
+    const ctx = serverCtx()
+
+    if (!session || !conn || !ctx) return
+    pickDirectory({
+      server: conn,
+      location: session.location,
+      title: language.t("session.location.choose"),
+      onSelect: (result) => {
+        const selected = Array.isArray(result) ? result[0] : result
+
+        if (!selected) return
+        void moveSessionDirectory({
+          api: ctx.sdk.api,
+          projects: ctx.projects,
+          sessions: ctx.data.session,
+          session,
+          directory: selected,
+          language,
+        })
+      },
+    })
+  }
 
   const project = createMemo(() => {
     const session = props.session
@@ -284,27 +314,36 @@ export function TabNavItem(props: {
       >
         <span data-slot="project-avatar-slot" class="flex size-4 shrink-0 items-center justify-center">
           <Show
-            when={props.session}
-            keyed
+            when={!props.hideProject || !props.session}
             fallback={
-              <Show
-                when={props.preparing}
-                fallback={
-                  <span class="block size-4 rounded-[3px] border border-v2-border-border-muted" aria-hidden="true" />
-                }
-              >
-                <SessionProgressIndicatorV2 />
+              <Show when={props.session} keyed>
+                {(session) => <SessionStatusDot server={props.server} sessionId={session.id} />}
               </Show>
             }
           >
-            {(session) => (
-              <SessionTabAvatar
-                project={project()}
-                directory={session.location.directory}
-                sessionId={session.id}
-                server={props.server}
-              />
-            )}
+            <Show
+              when={props.session}
+              keyed
+              fallback={
+                <Show
+                  when={props.preparing}
+                  fallback={
+                    <span class="block size-4 rounded-[3px] border border-v2-border-border-muted" aria-hidden="true" />
+                  }
+                >
+                  <SessionProgressIndicatorV2 />
+                </Show>
+              }
+            >
+              {(session) => (
+                <SessionTabAvatar
+                  project={project()}
+                  directory={session.location.directory}
+                  sessionId={session.id}
+                  server={props.server}
+                />
+              )}
+            </Show>
           </Show>
         </span>
         <span
@@ -401,6 +440,9 @@ export function TabNavItem(props: {
         >
           <Menu.Item disabled={!props.session || rename.isPending} onSelect={() => setMenu("rename", true)}>
             {language.t("common.rename")}
+          </Menu.Item>
+          <Menu.Item disabled={!props.session} onSelect={move}>
+            {language.t("common.move")}…
           </Menu.Item>
           <Menu.Item onSelect={props.onClose}>{language.t("common.closeTab")}</Menu.Item>
         </Menu.Context.Content>

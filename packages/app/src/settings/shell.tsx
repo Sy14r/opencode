@@ -14,6 +14,7 @@ import {
   type Accessor,
 } from "solid-js"
 import { createStore } from "solid-js/store"
+import { Key } from "@solid-primitives/keyed"
 import { useLanguage } from "@/runtime/i18n/language"
 import { usePlatform } from "@/runtime/platform/platform"
 import { useLayout } from "@/shell/state/layout"
@@ -214,7 +215,16 @@ export function SettingsScreen() {
         <Match when={surface.view().type === "project"}>
           <Show when={targetServer()?.connection} keyed>
             {(server) => (
-              <Show when={targetProject()}>{(project) => <ProjectSettings server={server} project={project()} />}</Show>
+              <Show when={targetProject()}>
+                {(project) => (
+                  <Key
+                    each={[project()]}
+                    by={(item) => `${ServerConnection.key(server)}:${item.id ?? item.worktree}`}
+                  >
+                    {(item) => <ProjectSettings server={server} project={item()} />}
+                  </Key>
+                )}
+              </Show>
             )}
           </Show>
         </Match>

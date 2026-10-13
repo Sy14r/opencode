@@ -20,7 +20,9 @@ import { errorMessage } from "@/shell/layout/helpers"
 import { useSessionTabAvatarState } from "@/shell/layout/project-avatar-state"
 import { sessionTreeIDs } from "@/session/requests/session-request-tree"
 import { pathKey } from "@/workspaces/path-key"
+import { useDirectoryPicker } from "@/workspaces/selection/picker"
 import { fetchSessionExport, saveSessionExport, sessionExportFilename } from "@/session/commands/export"
+import { moveSessionDirectory } from "@/session/commands/move"
 import { usePlatform } from "@/runtime/platform/platform"
 import { sessionLabel, sessionTitle } from "@/session/title"
 import { showToast } from "@/shell/notifications/toast"
@@ -48,6 +50,7 @@ export function createHomeSessionsController(home: HomeController) {
   const language = useLanguage()
   const platform = usePlatform()
   const queryClient = useQueryClient()
+  const pickDirectory = useDirectoryPicker()
 
   const projectDirectories = createMemo(() => {
     const selected = home.selection.value().directory
@@ -238,6 +241,34 @@ export function createHomeSessionsController(home: HomeController) {
     }
   }
 
+  const move = async (server: ServerConnection.Key, session: SessionInfo) => {
+    const conn = home.server.list().find((item) => ServerConnection.key(item) === server)
+    const ctx = conn ? home.server.context(conn) : undefined
+
+    if (!conn || !ctx) return
+
+    pickDirectory({
+      server: conn,
+      location: session.location,
+      title: language.t("session.location.choose"),
+      onSelect: (result) => {
+        const selected = Array.isArray(result) ? result[0] : result
+
+        if (!selected) return
+        void moveSessionDirectory({
+          api: ctx.sdk.api,
+          projects: ctx.projects,
+          sessions: ctx.data.session,
+          session,
+          directory: selected,
+          language,
+        }).finally(() => {
+          void queryClient.invalidateQueries({ queryKey: ["home-sessions", conn], exact: true })
+        })
+      },
+    })
+  }
+
   const remove = async (server: ServerConnection.Key, session: SessionInfo) => {
     const conn = home.server.list().find((item) => ServerConnection.key(item) === server)
     const ctx = conn ? home.server.context(conn) : undefined
@@ -378,6 +409,7 @@ export function createHomeSessionsController(home: HomeController) {
       },
       rename,
       export: exportSession,
+      move,
       showDelete: (server: ServerConnection.Key, session: SessionInfo) =>
         dialog.show(() => <DeleteDialog server={server} session={session} />),
     },
